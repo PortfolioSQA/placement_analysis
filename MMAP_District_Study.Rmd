@@ -1,0 +1,390 @@
+---
+title: "MMAP District Analysis"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+##Student Success in Statistics Courses
+###Introduction
+
+The AB705 bill that went into effect on 1/1/18 required California Community Colleges to maximize the probability that a student completes transfer-level math and English coursework within a one-year timeframe.  Community colleges must use HS Coursework, HS Grades, and/or HS GPA for placement into math and English courses (and may no longer use placement tests).  The Chancellor’s Office developed a placement model based on decision tree analysis by the RP Group [1] and uses a new funding formula to incentivize colleges to increase their English and math transfer-level one-year throughput rate.  The RP Group suggests that the results for the multiple measures assessment project (MMAP) data indicate that students would be more likely to complete transfer-level English, statistics, or pre-calculus if placed directly into those courses compared with lower-level remediation.  ESL students were treated separately for English, but not math.  A rather large natural experiment has developed from AB705 as California community college students account for about one-fifth of all US community college students [2].  This particular problem is interesting because the use of machine learning for student placement purposes. The analysis below focuses solely success in transfer-level statistics. 
+
+###Dataset
+
+A similar retrospective dataset to the MMAP math dataset was obtained for one multi-college California community college district.  The original dataset contains 239 variables and approximately 160,000 observations, many with missing values.  Approximately 40% of the students had some high school data. The high school data consisted of annual GPA, cumulative GPA, annual math GPA, cumulative math GPA, as well as math classes taken in high school.  Many students did not have complete data for all 4 years of high school.  Other variables included ethnicity, disability status, test scores, graduation date, gender, citizenship, etc. Many of these factors had either little importance in the model or were missing too many values to be useful.  All students had college data including math courses, course levels, grades, units attempted, units earned, major, college, etc.
+
+The MMAP data, on which the AB705 law is based, compiles data from 90 colleges and subsets the students to only those who have GPAs for all four years of high school.  For analysis of students who enroll in statistics, only those who enrolled in college statistics are considered. The predicted variable is success in the statistics course, identified as C or above.  This analysis does not restrict data to students who have HS data for all 4 years (as done by the statewide MMAP analysis), rather splits the data into two groups – those with a cumulative high school GPA and those without.  There were two reasons include students with less than four years of high school data. First, if we ignore 60% of the population of students who enroll in community college courses without high school data, we may not be building an appropriate placement model.  Second, most counselors or college registration software will only consider cumulative high school GPA for placement purposes and not check if students had matriculated all four years. 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+library (rpart) 
+library (rpart.plot) 
+library (dplyr)
+library (mlbench)
+library (caret)
+```
+###Feature Analysis
+Analysis of features, i.e. predictor variables, indicated that the transferable units earned variable had highest importance, then cumulative HS GPA for using both the decision tree model and Naïve Bayes.  Interestingly, whether or not a student had completed any other math course before enrollment (typical pre-requisites) had very little importance in predicting success in statistics courses.
+
+#### Feature Importance using rpart:
+```{r, cache=TRUE}
+# ensure results are repeatable
+set.seed(7)
+#load dataset
+MMAP_FS <- read.csv("MMAP_FS.csv", header = T, row.names=NULL, stringsAsFactors=FALSE)
+MMAP_FS$cc_first_course_success_ind = as.factor(MMAP_FS$cc_first_course_success_ind)
+#remove stats grades from dataset
+MMAP_FS = subset(MMAP_FS, select = -c(CCENCRFLCourseMarkPoints))
+
+#use tree to find important factors
+rPartMod <- train(cc_first_course_success_ind ~ ., data=MMAP_FS, method="rpart", na.action=na.exclude)
+rpartImp <- varImp(rPartMod)
+#plot importance uing rpart
+plot(rpartImp)
+
+```
+
+#### Feature Importance using Naive Bayes:
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+model <- train(cc_first_course_success_ind~., data=MMAP_FS, method="nb", na.action=na.exclude)
+# estimate variable importance
+importance <- varImp(model, scale=FALSE)
+```
+```{r}
+# plot importance using naive Bayes
+plot(importance)
+```
+
+
+###Data Processing
+Due to the lengthy code for processing the data, it is hidden in the printed file; however, it can be found in the R notebook for those interested in reproducing the analysis. In summary, the college course level is coded, data is restricted to students who take statistics, the predictor variable is created, and binary variables are created for whether or not students took particular math courses (pre-algebra, algebra i, algebra ii, etc).
+
+The dataset is then limited to students who have less than a 3.0, have not taken calculus or pre-calculus, and have earned less than 52 units.  The students who have any of the above attributes are very likely to pass the statistics course and are not needed in the decision tree analysis.  The original MMAP study removed students who had taken pre-calculus or above as well as students with high GPAs. Since the transferable units variable was not included in the predictor variables in the original analysis, the statewide MMAP dataset was not restricted to students with less than 52 transferable units earned.
+
+```{r, echo=FALSE}
+MMAPMathDistrict <- read.csv("RetroMath.csv", header = T, row.names=NULL, stringsAsFactors=FALSE)
+
+MMAPMathDistrict1 <- MMAPMathDistrict
+# CCMACRFLCourseLevelCode contains the ccfirst level rank,  y = 0, a,b,c,d,e = 1,2,3,4,5
+# statistics = 0
+# intermediate algebra = 1
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "Y"] <- 0
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "A"] <- 1
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "B"] <- 2
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "C"] <- 3
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "D"] <- 4
+MMAPMathDistrict1$cc_first_level_rank[MMAPMathDistrict1[,86] == "E"] <- 5
+#subset students who take college math classes
+MMAPMathDistrict2 <- MMAPMathDistrict1[which(MMAPMathDistrict1$cc_first_level_rank==0), ]
+write.csv(MMAPMathDistrict2,'MMAPMathDistrict2.csv')
+
+#subset for those who took statistics in the district
+MMAPMathDistrict2[,83]<- tolower(MMAPMathDistrict2[,83])
+MMAPMathDistrict3 <- MMAPMathDistrict2[grep("stat", MMAPMathDistrict2[,83]), ]
+write.csv(MMAPMathDistrict3,'MMAPMathDistrict3.csv')
+
+# get the success variable
+for (i in 1:nrow(MMAPMathDistrict3)) {
+  if (MMAPMathDistrict3[i,97] >= 2 ) {c = 1
+  } else {c = 0}
+  MMAPMathDistrict3$cc_first_course_success_ind[i] <- c
+}
+
+#rename some columns for the analysis
+colnames(MMAPMathDistrict3)[colnames(MMAPMathDistrict3)=="HS11OverallGradePointAverage"] <- "hs_11_gpa"
+colnames(MMAPMathDistrict3)[colnames(MMAPMathDistrict3)=="HS12OverallCumulativeGradePointAverage"] <- "gpa"
+colnames(MMAPMathDistrict3)[colnames(MMAPMathDistrict3)=="HS12MathematicsCumulativeGradePointAverage"] <- "hs_mathgpa"
+
+#create columns of classes passed in HS
+MMAPMathDistrict3$pre_alg_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 2 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 2 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 2 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$pre_alg_up11_c [is.na(MMAPMathDistrict3$pre_alg_up11_c )] <- 0
+
+MMAPMathDistrict3$alg_i_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 3 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 3 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 3 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$alg_i_up11_c [is.na(MMAPMathDistrict3$alg_i_up11_c )] <- 0
+MMAPMathDistrict3$alg_ii_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 5 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 5 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 5 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$alg_ii_up11_c [is.na(MMAPMathDistrict3$alg_ii_up11_c )] <- 0
+MMAPMathDistrict3$geo_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 4 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 4 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 4 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$geo_up11_c [is.na(MMAPMathDistrict3$geo_up11_c )] <- 0
+MMAPMathDistrict3$trig_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 7 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 7 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 7 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$trig_up11_c [is.na(MMAPMathDistrict3$trig_up11_c )] <- 0
+MMAPMathDistrict3$pre_calc_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 7 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 7 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 7 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$pre_calc_up11_c [is.na(MMAPMathDistrict3$pre_calc_up11_c )] <- 0
+MMAPMathDistrict3$calc_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 8 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 8 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 8 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$calc_up11_c [is.na(MMAPMathDistrict3$calc_up11_c )] <- 0
+MMAPMathDistrict3$stat_up11_c <- ifelse(
+  ( 
+    (MMAPMathDistrict3[,10] == 6 & MMAPMathDistrict3[,13] >= 2 ) |
+      (MMAPMathDistrict3[i,25] == 6 & MMAPMathDistrict3[,28] >= 2) |
+      (MMAPMathDistrict3[i,40]  == 6 & MMAPMathDistrict3[,43] >= 2)
+  ),
+  1,  # if condition is met, put 1
+  0   # else put 0
+)
+MMAPMathDistrict3$stat_up11_c [is.na(MMAPMathDistrict3$stat_up11_c )] <- 0
+
+#filter out students who "already place into statistics"
+#Remove students who have taken calculus or precalculus/trig
+MMAPMathDistrict4 <- MMAPMathDistrict3[(MMAPMathDistrict3$calc_up11 == 0),]
+MMAPMathDistrict4 <- MMAPMathDistrict4[(MMAPMathDistrict4$trig_up11_c == 0),]
+MMAPMathDistrict4 <- MMAPMathDistrict4[(MMAPMathDistrict4$CCTransferableUnitsEarned < 52), ]
+write.csv(MMAPMathDistrict4,'MMAPMathDistrict4.csv')
+```
+
+Below the data is prepared for decision trees by creating to datasets - those with a high school GPA and those without.  The data was partitioned into training and testing sets (80/20).
+```{r}
+# MMAP_FS$cc_first_course_success_ind = as.numeric(MMAP_FS$cc_first_course_success_ind)
+MMAP_Data <- MMAPMathDistrict4
+no_GPA <- MMAP_Data[is.na(MMAP_Data$HSLGOverallCumulativeGradePointAverage),]
+no_GPA <- no_GPA[!is.na(no_GPA$cc_first_course_success_ind),]
+hs_GPA <- MMAP_Data[(MMAP_Data$HSLGOverallCumulativeGradePointAverage < 3.0),]
+hs_GPA <- hs_GPA[!is.na(hs_GPA$HSLGOverallCumulativeGradePointAverage),]
+
+#CREATE TRAIN/TEST DATA for hs_GPA
+set.seed(7)
+idx.train <- createDataPartition(hs_GPA$cc_first_course_success_ind, p = .8, list = FALSE)
+# training set with p = 0.8
+train <- hs_GPA[idx.train, ] 
+# test set with p = 0.2 
+test <-  hs_GPA[-idx.train, ] 
+```
+
+###Models
+
+Function for creating a decision tree model.
+```{r}
+#control specified by statewide decision trees, better outcomes than default r settings.
+ctrl0015 <- rpart.control(minsplit=100, cp=0.0015, xval=10)
+#Function to get the decision tree model given the formula and data
+get_model <- function(formula_, data_) {
+  district_rpart <- rpart(formula = formula_
+                          ,data = data_
+                          ,method="poisson"
+                          ,control=ctrl0015)
+  # printcp(district_rpart)
+  #PRINT THE DECISION TREE
+  prp(district_rpart, main = "District Stats DT",
+      type = 4,    # label all nodes, show prob of second class
+      box.palette = "RdYlGn",  # auto color the nodes based on the model type
+      faclen = 0, varlen = 0, extra = 1)            # faclen = 0 to print full factor names
+  return(district_rpart)
+}
+```
+
+Function for creating a confusion matrix
+```{r}
+#get the confusion matrix given the model and the data
+get_confusion_matrix <- function(model_, data_) {
+  threshold <- 0.5
+  predicted_classes <- predict(model_, data_, type = "vector") >= threshold
+  predicted_classes <- lapply(predicted_classes, as.numeric)
+
+  data_$pred <- predict(model_, data_, type = "vector") >= threshold
+  data_$pred <- as.numeric(data_$pred)
+
+  u <- union(data_$pred, data_$cc_first_course_success_ind)
+  t <- table(factor(data_$pred, u), factor(data_$cc_first_course_success_ind, u))
+  return (confusionMatrix(t))
+}
+```
+
+### Model 1: District decision tree (similar to state MMAP model)
+```{r}
+#model1 = courses + gpa
+formula11 <- cc_first_course_success_ind ~ HSLGOverallCumulativeGradePointAverage  + alg_i_up11_c + alg_ii_up11_c + trig_up11_c + stat_up11_c
+model1 <- get_model(formula11, train)
+```
+
+#### Model 1: Confusion Matrix for Train Data
+```{r}
+cm1 <- get_confusion_matrix(model1, train)
+cm1
+#Train accuracy was 61%
+```
+
+#### Model 1: Confusion Matrix for Test Data
+```{r}
+cm2 <- get_confusion_matrix(model1, test)
+cm2
+# Test accuracy was 61%
+```
+
+The accuracy for model 1 is approximately 61% for the train and test data. Model 2 considers the number of transferable units earned. 
+
+### Model 2: Decision tree GPA, courses, and transferable units
+```{r}
+#model2 = courses + gpa + transferable units earned
+formula12 <- cc_first_course_success_ind ~ HSLGOverallCumulativeGradePointAverage  + alg_i_up11_c + alg_ii_up11_c +  stat_up11_c + CCTransferableUnitsEarned
+model2 <- get_model(formula12, train)
+```
+
+#### Model 2: Confusion Matrix for Train Data
+```{r}
+cm3 <- get_confusion_matrix(model2, train)
+cm3
+#Train accuracy was 68%
+```
+
+#### Model 2: Confusion Matrix for Test Data
+```{r}
+cm4 <- get_confusion_matrix(model2, test)
+cm4
+# Test accuracy was 64%
+```
+
+The accuracy increased for model 2 is approximately 68% for the train and 64% test data. The model splits the students on the first node by transferable units earned. Those with less than 3.8 units earned are very unlikely to pass statistics, less than 1% probability.
+
+Model 3 considers which of three colleges the student attended for the statistics course.
+
+### Model 3: Decision tree GPA, courses, transferable units, and college code.
+
+```{r}
+#model3 = courses + gpa + transferable units earned + college_code
+formula13 <- cc_first_course_success_ind ~ HSLGOverallCumulativeGradePointAverage + alg_i_up11_c + alg_ii_up11_c +  stat_up11_c + CCENCRFLCollegeCode + CCTransferableUnitsEarned
+model3 <- get_model(formula13, train)
+```
+
+Notice on model 3 how the first node splits on transferable units earned (<3.8), and the second node splits on college.
+
+#### Model 3: Confusion Matrix for Train Data
+```{r}
+cm5 <- get_confusion_matrix(model3, train)
+cm5
+#Train accuracy was 67%
+```
+
+#### Model 3: Confusion Matrix for Test Data
+```{r}
+cm6 <- get_confusion_matrix(model3, test)
+cm6
+# Test accuracy was 66%
+```
+
+The accuracy was slightly higher for the test set using the college codes than without, though the confidence intervals had significant overlap.
+
+Approximately 60% of the students do not have high school data. Next, the students with no GPA are included in the analysis. The no GPA data is split into train and test sets below.
+```{r}
+#partition NO GPA data
+idx.train2 <- createDataPartition(no_GPA$cc_first_course_success_ind, p = .8, list = FALSE)
+# training set with p = 0.8
+train2 <- no_GPA[idx.train2, ] 
+# test set with p = 0.2 
+test2 <-  no_GPA[-idx.train2, ] 
+```
+
+### Model 4: Decision tree students without GPA - transferable units earned
+```{r}
+# NO GPA students: model4 = transferable units earned (college code didn't improve accuracy)
+formula14 <- cc_first_course_success_ind ~ CCTransferableUnitsEarned
+model4 <- get_model(formula14, train2)
+```
+
+#### Model 4: Confusion Matrix for Train Data
+```{r}
+cm7 <- get_confusion_matrix(model4, train2)
+cm7
+#Train accuracy was 73%
+```
+
+
+#### Model 4: Confusion Matrix for Test Data
+```{r}
+cm8 <- get_confusion_matrix(model4, test2)
+cm8
+# Test accuracy was 73%
+```
+Surprisingly, using only one factor - transferable units earned -  the decision trees for the students without GPAs had a significantly higher accuracy for the train and test data (73%), than any of the models for students with high school data. This implies that students should not be taking statistics their first semester of college. 
+
+The same analysis is done for the entire dataset (those with and without high school data) to compare accuracies.
+```{r}
+train_all <- rbind(train, train2)
+test_all <- rbind(test, test2)
+```
+
+
+### Model 5: District decision tree all students - transferable units earned
+```{r}
+formula14 <- cc_first_course_success_ind ~ CCTransferableUnitsEarned
+model5 <- get_model(formula14, train_all)
+```
+
+#### Model 5: Confusion Matrix for Train Data
+```{r}
+cm9 <- get_confusion_matrix(model5, train_all)
+cm9
+#Train accuracy was 69%
+```
+
+#### Model 5: Confusion Matrix for Test Data
+```{r}
+cm10 <- get_confusion_matrix(model5, test_all)
+cm10
+#Train accuracy was 68%
+```
+
+###Conclusion
+The models with the highest accuracy in predicting success in statistics in this particular district depend not on high school GPA, math classes taken or college, but on the number of transferable units earned. This data analysis suggests that students are approximately six times more likely of passing statistics if they have taken more than 3.8 transferable units. Results of this study directly oppose the basis of the AB705 law and Chancellor's Office funding formula (encouraging students to take a transfer-level math course within a one-year time frame).  According the outcome of the above model, students should wait at least one semester to take statistics in community college.
+
+One must also consider that the highest test accuracy rate for predicting success in statistics using decision trees was 68%, meaning approximately 32% of students could be mis-placed.  Additionally, the analysis does not consider students who repeat the course – an important aspect to the system which should be considered for future study.
+
+###References
+[1] P.R.Bahr, L. Fagioli, J. Hetts, C. Hayward, T. Willett, D. Lamoree and R. Baker, "Improving Placement Accuracy in California's Community Colleges Using Multiple Measures of High School Achievement," Community College Review, vol. 47, no. 2, pp. 78-211, 2019.
+
+[2] California Community College Facts and Figures; https://foundationccc.org/About-Us/About-the-Colleges/Facts-and-Figures
+
+
